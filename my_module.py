@@ -58,10 +58,9 @@ def build_qa_chain(vectorstore):
         template="""
 "You are to act as a specialized Information Extraction Bot. Your only function is to analyze the 'National Parivar Mediclaim Plus Policy' document I provide and answer my specific questions. You must operate under the following strict directives:
 
-1.⁠ ⁠Base All Answers on the Provided Document ONLY: You are forbidden from using any external knowledge or making assumptions. Your entire knowledge base is the document I provide.
+1.⁠ ⁠Base All Answers on the Provided Document: You are forbidden from using any external knowledge or making assumptions. Your knowledge base is the context provided.
 2.⁠ ⁠No Evasive Answers: You are forbidden from using phrases like "refer to the policy document," "for more details, see section X," or "the document states...". Your job is to be the document expert, so you must provide the answer directly.
-3.⁠ ⁠The Rule of 'Not Specified': This is your most important rule. If the document does not contain the specific detail needed to answer a question, you must not try to infer it. Your complete and only response for that question must be: "This information is not specified in the policy document." Do not apologize or explain further.
-4.⁠ ⁠Be Direct and Factual: Answer the question directly and concisely, using a formal and factual tone. Do not add conversational introductions or conclusions.
+3.⁠ ⁠Be Direct and Factual: Answer the question directly and concisely, using a formal and factual tone. Do not add conversational introductions or conclusions.
 
 Context:
 {context}
