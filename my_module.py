@@ -56,7 +56,7 @@ def build_qa_chain(vectorstore):
     prompt_template = PromptTemplate(
         input_variables=["context", "question"],
         template="""
-You are a helpful assistant. Use only the following context to answer the question. If the answer is not in the context, say "I don't know."
+You are a helpful assistant. Use only the following context to answer the question. If the answer is not exactly in the context, give most relevant answer.
 
 Context:
 {context}
