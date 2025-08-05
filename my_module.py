@@ -1,9 +1,9 @@
 import os
 from langchain_community.vectorstores import FAISS
 from langchain.embeddings import OpenAIEmbeddings
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_experimental.text_splitter import SemanticChunker
 from langchain.document_loaders import PyPDFLoader
-from langchain.chat_models import ChatOpenAI
+from langchain_openai import ChatOpenAI
 from langchain.chains import RetrievalQA
 from langchain.retrievers.multi_query import MultiQueryRetriever
 from langchain.prompts import PromptTemplate
@@ -16,28 +16,9 @@ def load_documents(folder_path):
             docs.extend(loader.load())
     return docs
 
-def split_documents(documents):
-    text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1000,
-        chunk_overlap=200,
-        separators=["\n\n", "\n", ".", " ", ""]
-    )
-
+def split_documents(documents, embeddings):
+    text_splitter = SemanticChunker(embeddings)
     chunks = text_splitter.split_documents(documents)
-
-    for chunk in chunks:
-        text = chunk.page_content.lower()
-        if "coverage" in text or "covered" in text:
-            section = "coverage"
-        elif any(term in text for term in ["exclusion", "excluded", "not covered"]):
-            section = "exclusions"
-        elif any(term in text for term in ["term", "definition", "meaning"]):
-            section = "general"
-        else:
-            section = "other"
-
-        chunk.metadata["section"] = section
-
     return chunks
 
 def build_qa_chain(vectorstore):
@@ -58,9 +39,9 @@ def build_qa_chain(vectorstore):
         template="""
 "You are to act as a specialized Information Extraction Bot. Your only function is to analyze the 'National Parivar Mediclaim Plus Policy' document I provide and answer my specific questions. You must operate under the following strict directives:
 
-1.⁠ ⁠Base All Answers on the Provided Document: You are forbidden from using any external knowledge or making assumptions. Your knowledge base is the context provided.
-2.⁠ ⁠No Evasive Answers: You are forbidden from using phrases like "refer to the policy document," "for more details, see section X," or "the document states...". Your job is to be the document expert, so you must provide the answer directly.
-3.⁠ ⁠Be Direct and Factual: Answer the question directly and concisely, using a formal and factual tone. Do not add conversational introductions or conclusions.
+1. Base All Answers on the Provided Document: You are forbidden from using any external knowledge or making assumptions. Your knowledge base is the context provided.
+2. No Evasive Answers: You are forbidden from using phrases like "refer to the policy document," "for more details, see section X," or "the document states...". Your job is to be the document expert, so you must provide the answer directly.
+3. Be Direct and Factual: Answer the question directly and concisely, using a formal and factual tone. Do not add conversational introductions or conclusions.
 4. Prioritize and Include All Numerical Data: This is a primary directive. When you formulate an answer, you must actively search the document for any and all numerical information related to that answer. You must integrate this data directly into your response. This includes, but is not limited to: •⁠ ⁠Time Periods: waiting periods (in days, months, or years), grace periods. •⁠ ⁠Monetary Values: coverage limits, sub-limits, caps on expenses, deductibles. •⁠ ⁠Percentages: co-payments, discounts (like No Claim Discount). •⁠ ⁠Quantities: number of treatments, deliveries, or check-ups covered.
 
 Context:
@@ -79,3 +60,62 @@ Question: {question}
     )
 
     return qa_chain
+
+# main.py
+from fastapi import FastAPI, Request, Header, HTTPException
+from pydantic import BaseModel
+from typing import List
+import os
+import requests
+from dotenv import load_dotenv
+
+from my_module import load_documents, split_documents, build_qa_chain
+from langchain_community.vectorstores import FAISS
+from langchain_openai import OpenAIEmbeddings
+
+# Load environment variables (e.g., OpenAI API key)
+load_dotenv()
+
+app = FastAPI()
+
+# Define the request body model
+class HackRxRequest(BaseModel):
+    documents: str  # URL to a PDF
+    questions: List[str]
+
+@app.post("/hackrx/run")
+async def run_hackrx(request: HackRxRequest, authorization: str = Header(...)):
+    # Validate Authorization header
+    if not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Invalid Authorization header")
+
+    # Step 1: Download PDF
+    os.makedirs("SampleDocs", exist_ok=True)
+    pdf_path = os.path.join("SampleDocs", "input.pdf")
+    try:
+        response = requests.get(request.documents)
+        with open(pdf_path, "wb") as f:
+            f.write(response.content)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to download PDF: {str(e)}")
+
+    # Step 2: Process documents and build vectorstore
+    try:
+        docs = load_documents("SampleDocs/")
+        embeddings = OpenAIEmbeddings()
+        chunks = split_documents(docs, embeddings)
+        vectorstore = FAISS.from_documents(chunks, embeddings)
+        qa_chain = build_qa_chain(vectorstore)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Processing failed: {str(e)}")
+
+    # Step 3: Answer the questions
+    try:
+        answers = []
+        for q in request.questions:
+            result = qa_chain({"query": q})
+            answers.append(result["result"])
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Question answering failed: {str(e)}")
+
+    return {"answers": answers}
