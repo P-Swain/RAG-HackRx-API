@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 
 from my_module import load_documents, split_documents, build_qa_chain
 from langchain_community.vectorstores import FAISS
-from langchain.embeddings import OpenAIEmbeddings
+from langchain_openai import OpenAIEmbeddings
 
 # Load environment variables (e.g., OpenAI API key)
 load_dotenv()
@@ -38,8 +38,8 @@ async def run_hackrx(request: HackRxRequest, authorization: str = Header(...)):
     # Step 2: Process documents and build vectorstore
     try:
         docs = load_documents("SampleDocs/")
-        chunks = split_documents(docs)
         embeddings = OpenAIEmbeddings()
+        chunks = split_documents(docs, embeddings)
         vectorstore = FAISS.from_documents(chunks, embeddings)
         qa_chain = build_qa_chain(vectorstore)
     except Exception as e:
