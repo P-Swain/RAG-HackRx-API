@@ -14,6 +14,10 @@ load_dotenv()
 
 app = FastAPI()
 
+# A simple cache for storing vector stores
+vector_store_cache = {}
+embeddings = OpenAIEmbeddings()
+
 # Define the request body model
 class HackRxRequest(BaseModel):
     documents: str  # URL to a PDF
@@ -25,28 +29,34 @@ async def run_hackrx(request: HackRxRequest, authorization: str = Header(...)):
     if not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Invalid Authorization header")
 
-    # Step 1: Download PDF
-    os.makedirs("SampleDocs", exist_ok=True)
-    pdf_path = os.path.join("SampleDocs", "input.pdf")
-    try:
-        response = requests.get(request.documents)
-        with open(pdf_path, "wb") as f:
-            f.write(response.content)
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Failed to download PDF: {str(e)}")
+    # Step 1: Check cache for existing vector store
+    documents_url = request.documents
+    if documents_url in vector_store_cache:
+        vectorstore = vector_store_cache[documents_url]
+    else:
+        # Step 1: Download PDF (Only if not in cache)
+        os.makedirs("SampleDocs", exist_ok=True)
+        pdf_path = os.path.join("SampleDocs", "input.pdf")
+        try:
+            response = requests.get(documents_url)
+            with open(pdf_path, "wb") as f:
+                f.write(response.content)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Failed to download PDF: {str(e)}")
 
-    # Step 2: Process documents and build vectorstore
-    try:
-        docs = load_documents("SampleDocs/")
-        embeddings = OpenAIEmbeddings()
-        chunks = split_documents(docs, embeddings)
-        vectorstore = FAISS.from_documents(chunks, embeddings)
-        qa_chain = build_qa_chain(vectorstore)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Processing failed: {str(e)}")
+        # Step 2: Process documents and build vectorstore
+        try:
+            docs = load_documents("SampleDocs/")
+            chunks = split_documents(docs, embeddings)
+            vectorstore = FAISS.from_documents(chunks, embeddings)
+            # Cache the vectorstore
+            vector_store_cache[documents_url] = vectorstore
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Processing failed: {str(e)}")
 
     # Step 3: Answer the questions
     try:
+        qa_chain = build_qa_chain(vectorstore)
         answers = []
         for q in request.questions:
             result = qa_chain({"query": q})
