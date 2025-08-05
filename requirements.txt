@@ -9,3 +9,4 @@ pypdf
 python-dotenv
 langchain-community
 langchain-experimental
+langchain-openai
