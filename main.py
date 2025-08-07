@@ -1,67 +1,62 @@
 from fastapi import FastAPI, Request, Header, HTTPException
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 from typing import List
 import os
-import requests
 from dotenv import load_dotenv
+import hashlib
 
-from my_module import load_documents, split_documents, build_qa_chain
-from langchain_community.vectorstores import FAISS
-from langchain_openai import OpenAIEmbeddings
+# Import the updated offline function
+from my_module import search_pinecone_memory_offline
 
-# Load environment variables (e.g., OpenAI API key)
+# Load environment variables
 load_dotenv()
 
 app = FastAPI()
 
-# A simple cache for storing vector stores
-vector_store_cache = {}
-embeddings = OpenAIEmbeddings()
-
-# Define the request body model
 class HackRxRequest(BaseModel):
-    documents: str  # URL to a PDF
+    documents: str
     questions: List[str]
 
 @app.post("/hackrx/run")
 async def run_hackrx(request: HackRxRequest, authorization: str = Header(...)):
-    # Validate Authorization header
+
     if not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Invalid Authorization header")
 
-    # Step 1: Check cache for existing vector store
-    documents_url = request.documents
-    if documents_url in vector_store_cache:
-        vectorstore = vector_store_cache[documents_url]
-    else:
-        # Step 1: Download PDF (Only if not in cache)
-        os.makedirs("SampleDocs", exist_ok=True)
-        pdf_path = os.path.join("SampleDocs", "input.pdf")
-        try:
-            response = requests.get(documents_url)
-            with open(pdf_path, "wb") as f:
-                f.write(response.content)
-        except Exception as e:
-            raise HTTPException(status_code=400, detail=f"Failed to download PDF: {str(e)}")
+    # Namespace for document chunks
+    doc_namespace = hashlib.sha256(request.documents.encode()).hexdigest()
+    # Separate namespace for Q&A cache
+    qa_namespace = f"{doc_namespace}-qa"
 
-        # Step 2: Process documents and build vectorstore
-        try:
-            docs = load_documents("SampleDocs/")
-            chunks = split_documents(docs, embeddings)
-            vectorstore = FAISS.from_documents(chunks, embeddings)
-            # Cache the vectorstore
-            vector_store_cache[documents_url] = vectorstore
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Processing failed: {str(e)}")
-
-    # Step 3: Answer the questions
+    answers = []
+    
+    # --- OFFLINE LOGIC ---
+    # Fetch all cached answers for this document namespace at once
     try:
-        qa_chain = build_qa_chain(vectorstore)
-        answers = []
+        all_cached_qa = await run_in_threadpool(search_pinecone_memory_offline, qa_namespace)
+        
         for q in request.questions:
-            result = qa_chain({"query": q})
-            answers.append(result["result"])
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Question answering failed: {str(e)}")
+            # Check for an exact match in the fetched cache
+            answer = all_cached_qa.get(q)
+            
+            if answer:
+                answers.append({
+                    "question": q,
+                    "answer": answer,
+                    "from_memory": True
+                })
+            else:
+                # If not in cache, append a message indicating it, as OpenAI is offline
+                answers.append({
+                    "question": q,
+                    "answer": "Answer not found in cache. Cannot generate new answer as OpenAI key is not functional.",
+                    "from_memory": False
+                })
 
-    return {"answers": answers}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve data from Pinecone: {str(e)}")
+
+    return {
+        "answers": answers
+    }

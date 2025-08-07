@@ -1,12 +1,4 @@
 fastapi
 uvicorn
-requests
-langchain
-faiss-cpu
-openai
-tiktoken
-pypdf
 python-dotenv
-langchain-community
-langchain-experimental
-langchain-openai
+pinecone-client
