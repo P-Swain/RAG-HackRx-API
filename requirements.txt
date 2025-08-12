@@ -1,4 +1,13 @@
 fastapi
 uvicorn
+requests
+langchain
+langchain-openai
+langchain-pinecone
+langchain-experimental
+langchain-community
+openai
+tiktoken
+pypdf
 python-dotenv
-pinecone
+pinecone-client
